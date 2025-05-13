@@ -28,7 +28,11 @@ type ChangedValues = {
   }
 }
 
-export function Leaderboard() {
+interface LeaderboardProps {
+  onUpdatePlayers?: (players: Player[]) => void;
+}
+
+export function Leaderboard({ onUpdatePlayers }: LeaderboardProps) {
   const [players, setPlayers] = useState<Player[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
@@ -82,16 +86,23 @@ export function Leaderboard() {
       if (response.ok) {
         const data = await response.json()
         
-        // Detectar cambios antes de actualizar el estado
-        const changes = detectChanges(data, players);
+        // Save current players as previous before updating
+        const oldPlayers = [...players];
+        prevPlayersRef.current = oldPlayers;
+        
+        // Detect changes based on old state
+        const changes = detectChanges(data, oldPlayers);
         setChangedValues(changes);
         
-        // Guardar estado previo y actualizar jugadores
-        prevPlayersRef.current = [...players]
-        setPlayers(data)
-        setLastUpdated(new Date())
+        // Update state with new data
+        setPlayers(data);
+        setLastUpdated(new Date());
         
-        // Limpiar los cambios después de 2 segundos
+        // Notify parent component of the update with proper data references
+        if (onUpdatePlayers) {
+          onUpdatePlayers(JSON.parse(JSON.stringify(data)));
+        }
+        
         setTimeout(() => {
           setChangedValues({});
         }, 2000);
@@ -107,10 +118,8 @@ export function Leaderboard() {
   useEffect(() => {
     fetchLeaderboard()
 
-    // Set up polling interval (every 30 seconds)
-    const interval = setInterval(fetchLeaderboard, 30000)
+    const interval = setInterval(fetchLeaderboard, 15000)
 
-    // Clean up interval on unmount
     return () => clearInterval(interval)
   }, [])
 
@@ -142,7 +151,9 @@ export function Leaderboard() {
           <Button
             variant="ghost"
             size="icon"
-            onClick={fetchLeaderboard}
+            onClick={() => {
+              fetchLeaderboard();
+            }}
             disabled={isLoading}
             className="text-white hover:bg-[#18392b]"
           >

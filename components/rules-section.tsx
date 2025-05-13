@@ -12,7 +12,7 @@ export function RulesSection() {
         </CardTitle>
         <CardDescription className="text-[#b6f5c1]">How to play "Double or Nothing"</CardDescription>
       </CardHeader>
-      <CardContent className="p-6 bg-white">
+      <CardContent className="p-6 bg-white rounded-b-lg">
         <Tabs defaultValue="rules">
           <TabsList className="grid w-full grid-cols-2 mb-6 bg-[#e6f9ed] rounded-lg p-1">
             <TabsTrigger value="rules" className="data-[state=active]:bg-[#17442e] data-[state=active]:text-white text-[#17442e] font-semibold rounded-md transition-colors">Basic Rules</TabsTrigger>

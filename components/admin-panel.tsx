@@ -18,6 +18,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
+import { AdminLogin } from "./admin-login"
 
 type Player = {
   _id: string;
@@ -34,6 +35,8 @@ const generateTempId = (prefix = 'temp-player') => {
 };
 
 export function AdminPanel() {
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false)
+  const [authToken, setAuthToken] = useState<string>('')
   const [selectedPlayer, setSelectedPlayer] = useState("")
   const [balanceChange, setBalanceChange] = useState("")
   const [players, setPlayers] = useState<Player[]>([])
@@ -45,10 +48,21 @@ export function AdminPanel() {
   const [updatingPlayerIds, setUpdatingPlayerIds] = useState<Record<string, boolean>>({})
   const [deletingPlayerIds, setDeletingPlayerIds] = useState<Record<string, boolean>>({})
 
-  // Fetch players on component mount
+  // Check if token exists in localStorage on component mount
   useEffect(() => {
-    fetchPlayers()
+    const storedToken = localStorage.getItem('admin_token')
+    if (storedToken) {
+      setAuthToken(storedToken)
+      setIsAuthenticated(true)
+    }
   }, [])
+
+  // Fetch players when authenticated
+  useEffect(() => {
+    if (isAuthenticated) {
+      fetchPlayers()
+    }
+  }, [isAuthenticated])
 
   const fetchPlayers = async () => {
     try {
@@ -103,7 +117,10 @@ export function AdminPanel() {
     try {
       const response = await fetch("/api/leaderboard", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${authToken}`
+        },
         body: JSON.stringify({
           playerId: selectedPlayer,
           newBalance,
@@ -148,7 +165,10 @@ export function AdminPanel() {
     try {
       const response = await fetch("/api/leaderboard", {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${authToken}`
+        },
         body: JSON.stringify({ name: newPlayerName }),
       })
       
@@ -194,296 +214,301 @@ export function AdminPanel() {
     setDeletingPlayerIds(prev => ({ ...prev, [id]: true }))
     
     try {
-      const response = await fetch(`/api/leaderboard?id=${id}`, { method: "DELETE" })
+      const response = await fetch(`/api/leaderboard?id=${id}`, {
+        method: "DELETE",
+        headers: {
+          "Authorization": `Bearer ${authToken}`
+        }
+      })
       if (response.ok) {
         toast({ title: "Success", description: "Player deleted successfully" })
       } else {
-        // Revert on error
+        // Restore player on error
         setPlayers(oldPlayers)
         toast({ title: "Error", description: "Failed to delete player", variant: "destructive" })
       }
     } catch (error) {
-      // Revert on error
+      // Restore player on error
       setPlayers(oldPlayers)
       toast({ title: "Error", description: "An unexpected error occurred", variant: "destructive" })
     } finally {
-      setDeletingPlayerIds(prev => {
-        const updated = { ...prev }
-        delete updated[id]
-        return updated
-      })
+      setDeletingPlayerIds(prev => ({ ...prev, [id]: false }))
     }
   }
 
   const handleUpdateWL = async (id: string, type: "win" | "loss", delta: number) => {
+    // Find player and calculate new values
     const player = players.find(p => p._id === id)
     if (!player) return
     
-    // Check if operation is valid
-    if (delta < 0) {
-      if ((type === "win" && player.wins <= 0) || (type === "loss" && player.losses <= 0)) {
-        return
-      }
-    }
-    
-    // Save old state for potential reversal
-    const oldPlayers = [...players]
+    // Key for tracking update state
+    const updateKey = `${id}-${type}-${delta > 0 ? "inc" : "dec"}`;
     
     // Optimistically update UI
+    const oldPlayers = [...players]
     setPlayers(players.map(p => {
-      if (p._id !== id) return p
+      if (p._id !== id) return p;
+      
       return {
         ...p,
-        wins: type === "win" ? Math.max(0, p.wins + delta) : p.wins,
-        losses: type === "loss" ? Math.max(0, p.losses + delta) : p.losses
-      }
+        [type === "win" ? "wins" : "losses"]: Math.max(0, p[type === "win" ? "wins" : "losses"] + delta)
+      };
     }))
     
-    // Set this specific player in updating state
-    const operationKey = `${id}-${type}-${delta}`
-    setUpdatingPlayerIds(prev => ({ ...prev, [operationKey]: true }))
+    // Mark as updating
+    setUpdatingPlayerIds(prev => ({ ...prev, [updateKey]: true }))
     
     try {
-      const response = await fetch("/api/leaderboard", {
+      const response = await fetch(`/api/leaderboard`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ playerId: id, type, delta }),
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          playerId: id,
+          type,
+          delta
+        })
       })
       
       if (response.ok) {
+        const result = await response.json();
+        // No need to update players here as we already did it optimistically
         toast({ 
           title: "Success", 
-          description: `Player ${type === 'win' ? 'win' : 'loss'} ${delta > 0 ? 'increased' : 'decreased'}`
+          description: `Updated ${player.name}'s ${type === "win" ? "wins" : "losses"}`
         })
       } else {
         // Revert on error
         setPlayers(oldPlayers)
-        toast({ title: "Error", description: `Failed to update ${type}s`, variant: "destructive" })
+        toast({ title: "Error", description: "Failed to update record", variant: "destructive" })
       }
     } catch (error) {
       // Revert on error
       setPlayers(oldPlayers)
       toast({ title: "Error", description: "An unexpected error occurred", variant: "destructive" })
     } finally {
-      setUpdatingPlayerIds(prev => {
-        const updated = { ...prev }
-        delete updated[operationKey]
-        return updated
-      })
+      setUpdatingPlayerIds(prev => ({ ...prev, [updateKey]: false }))
     }
   }
 
-  // Helper to check if a specific W/L operation is in progress
   const isWLUpdating = (id: string, type: string, delta: number) => {
-    const operationKey = `${id}-${type}-${delta}`
-    return !!updatingPlayerIds[operationKey]
+    const key = `${id}-${type}-${delta > 0 ? "inc" : "dec"}`;
+    return updatingPlayerIds[key] || false;
   }
 
+  const handleLogout = () => {
+    localStorage.removeItem('admin_token')
+    setAuthToken('')
+    setIsAuthenticated(false)
+  }
+
+  // If not authenticated, show login screen
+  if (!isAuthenticated) {
+    return <AdminLogin onLogin={(token) => {
+      setAuthToken(token)
+      setIsAuthenticated(true)
+    }} />
+  }
+
+  // Show admin panel if authenticated
   return (
     <div className="space-y-8">
-      {/* Header */}
-      <div className="bg-[#204d34] text-white p-4 rounded-t-lg">
-        <h1 className="text-xl font-bold">Admin Panel</h1>
-        <p className="text-[#e0fbe0] text-sm">Manage player balances and stats</p>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-[#17442e]">Admin Panel</h1>
+        <Button variant="outline" onClick={handleLogout}>Logout</Button>
       </div>
 
-      <div className="space-y-8 px-4">
-        {/* Adjust Player Balance Section */}
-        <section>
-          <h2 className="text-[#204d34] font-bold text-lg mb-4">Adjust Player Balance</h2>
-          
-          <div className="max-w-3xl">
-            <div className="flex flex-col md:flex-row gap-4 mb-4">
-              <div className="flex-1 max-w-xs">
-                <Label htmlFor="player" className="text-[#204d34] mb-2 block">Player</Label>
-                <Select value={selectedPlayer} onValueChange={setSelectedPlayer} disabled={isBalanceUpdating}>
-                  <SelectTrigger id="player" className="bg-white text-[#204d34]">
-                    <SelectValue placeholder="Select player" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {players.map((player) => (
-                      <SelectItem key={player._id} value={player._id}>
-                        {player.name} (${player.balance} USDT)
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              
-              <div className="flex-1 max-w-xs">
-                <Label htmlFor="balance-change" className="text-[#204d34] mb-2 block">Balance Change</Label>
-                <div className="flex items-center gap-2">
-                  <Input 
-                    id="balance-change" 
-                    type="number" 
-                    placeholder="+2 or -2" 
-                    value={balanceChange} 
-                    onChange={(e) => setBalanceChange(e.target.value)}
-                    className="bg-white text-[#204d34]"
-                    disabled={isBalanceUpdating}
-                  />
-                  <span className="text-[#204d34] whitespace-nowrap">USDT</span>
-                </div>
-              </div>
-            </div>
-            <div className="flex items-end">
-              <Button 
-                onClick={handleUpdateBalance} 
-                disabled={isBalanceUpdating || !selectedPlayer || !balanceChange} 
-                className="bg-[#204d34] hover:bg-[#163a26] text-white h-10"
-              >
-                {isBalanceUpdating ? (
-                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Updating...</>
-                ) : (
-                  "Update Balance"
-                )}
-              </Button>
-            </div>
-          </div>
-        </section>
-
-        {/* Create New Player Section */}
-        <section>
-          <h2 className="text-[#204d34] font-bold text-lg mb-4">Create New Player</h2>
-          
-          <div className="flex gap-4 max-w-md">
-            <Input 
-              placeholder="Enter new player name" 
-              value={newPlayerName} 
-              onChange={e => setNewPlayerName(e.target.value)}
-              className="bg-white text-[#204d34] flex-1"
-              disabled={isCreatingPlayer}
-            />
-            <Button 
-              onClick={handleCreatePlayer} 
-              disabled={isCreatingPlayer || !newPlayerName.trim()} 
-              className="bg-[#204d34] hover:bg-[#163a26] text-white whitespace-nowrap"
-            >
-              {isCreatingPlayer ? (
-                <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Adding...</>
-              ) : (
-                "Add Player"
-              )}
-            </Button>
-          </div>
-        </section>
-
-        {/* Manage Players Section */}
-        <section>
-          <h2 className="text-[#204d34] font-bold text-lg mb-4">Manage Players</h2>
-          
-          {players.length === 0 ? (
-            <div className="text-center p-6 bg-white rounded-lg">
-              <p className="text-[#204d34]">No players available. Create a player to get started.</p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {players.map((player) => (
-                <div 
-                  key={player._id} 
-                  className="bg-white rounded-lg p-4"
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Left column - Add player */}
+        <div className="bg-white p-6 rounded-lg border border-[#deecdc] shadow-sm">
+          <h2 className="text-xl font-semibold text-[#17442e] mb-4">Create New Player</h2>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="playerName">Player Name</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="playerName"
+                  value={newPlayerName}
+                  onChange={(e) => setNewPlayerName(e.target.value)}
+                  placeholder="Enter player name"
+                  className="flex-1"
+                />
+                <Button 
+                  onClick={handleCreatePlayer} 
+                  disabled={isCreatingPlayer || !newPlayerName.trim()}
+                  className="bg-[#17442e] hover:bg-[#123020]"
                 >
-                  <div className="flex flex-col md:flex-row justify-between items-center">
-                    <div className="flex items-center gap-4 mb-4 md:mb-0">
-                      <h3 className="text-[#204d34] font-semibold text-lg">{player.name}</h3>
-                      <div className="bg-[#204d34] text-white px-4 py-1 rounded-md">
-                        ${player.balance} USDT
+                  {isCreatingPlayer ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Right column - Update balance */}
+        <div className="bg-white p-6 rounded-lg border border-[#deecdc] shadow-sm">
+          <h2 className="text-xl font-semibold text-[#17442e] mb-4">Update Balance</h2>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="playerSelect">Select Player</Label>
+              <Select value={selectedPlayer} onValueChange={setSelectedPlayer}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a player" />
+                </SelectTrigger>
+                <SelectContent>
+                  {players.map((player) => (
+                    <SelectItem key={player._id} value={player._id}>
+                      {player.name} (Balance: ${player.balance} USDT)
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="balanceChange">Amount Change</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="balanceChange"
+                  type="number"
+                  value={balanceChange}
+                  onChange={(e) => setBalanceChange(e.target.value)}
+                  placeholder="Enter amount (positive or negative)"
+                  className="flex-1"
+                />
+                <Button 
+                  onClick={handleUpdateBalance} 
+                  disabled={isBalanceUpdating || !selectedPlayer || !balanceChange}
+                  className="bg-[#17442e] hover:bg-[#123020]"
+                >
+                  {isBalanceUpdating ? <Loader2 className="h-4 w-4 animate-spin" /> : "Update"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Player table */}
+      <div className="bg-white rounded-lg border border-[#deecdc] shadow-sm overflow-hidden">
+        <h2 className="text-xl font-semibold text-[#17442e] p-4 border-b border-[#deecdc]">Players</h2>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="bg-[#f0f9ed]">
+                <th className="text-left p-4 font-semibold text-[#17442e]">Name</th>
+                <th className="text-center p-4 font-semibold text-[#17442e]">Balance</th>
+                <th className="text-center p-4 font-semibold text-[#17442e]">Wins</th>
+                <th className="text-center p-4 font-semibold text-[#17442e]">Losses</th>
+                <th className="text-right p-4 font-semibold text-[#17442e]">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {players.length > 0 ? (
+                players.map((player) => (
+                  <tr key={player._id} className="border-t border-[#deecdc]">
+                    <td className="p-4 font-medium">{player.name}</td>
+                    <td className="p-4 text-center">${player.balance} USDT</td>
+                    <td className="p-4 text-center">
+                      <div className="flex items-center justify-center gap-2">
+                        <Button
+                          size="icon"
+                          variant="outline"
+                          className="h-8 w-8 rounded-full"
+                          onClick={() => handleUpdateWL(player._id, "win", -1)}
+                          disabled={player.wins <= 0 || isWLUpdating(player._id, "win", -1)}
+                        >
+                          {isWLUpdating(player._id, "win", -1) ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Minus className="h-4 w-4" />
+                          )}
+                        </Button>
+                        <span className="w-8 text-center">{player.wins}</span>
+                        <Button
+                          size="icon"
+                          variant="outline"
+                          className="h-8 w-8 rounded-full"
+                          onClick={() => handleUpdateWL(player._id, "win", 1)}
+                          disabled={isWLUpdating(player._id, "win", 1)}
+                        >
+                          {isWLUpdating(player._id, "win", 1) ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Plus className="h-4 w-4" />
+                          )}
+                        </Button>
                       </div>
-                    </div>
-                    
-                    <div className="flex flex-wrap gap-6 items-center">
-                      <div className="flex items-center">
-                        <span className="text-[#204d34] mr-3">Wins: {player.wins}</span>
-                        <div className="flex gap-1">
-                          <Button 
-                            onClick={() => handleUpdateWL(player._id, "win", 1)}
-                            disabled={isWLUpdating(player._id, "win", 1)}
-                            className="h-8 w-8 p-0 rounded-md border border-[#204d34] bg-[#e0fbe0] text-[#204d34] hover:bg-[#c1e8b8]"
-                          >
-                            {isWLUpdating(player._id, "win", 1) ? 
-                              <Loader2 className="h-4 w-4 animate-spin" /> : 
-                              <Plus size={16} />
-                            }
-                          </Button>
-                          <Button 
-                            onClick={() => handleUpdateWL(player._id, "win", -1)}
-                            disabled={isWLUpdating(player._id, "win", -1) || player.wins === 0}
-                            className="h-8 w-8 p-0 rounded-md border border-[#204d34] bg-[#e0fbe0] text-[#204d34] hover:bg-[#c1e8b8]"
-                          >
-                            {isWLUpdating(player._id, "win", -1) ? 
-                              <Loader2 className="h-4 w-4 animate-spin" /> : 
-                              <Minus size={16} />
-                            }
-                          </Button>
-                        </div>
+                    </td>
+                    <td className="p-4 text-center">
+                      <div className="flex items-center justify-center gap-2">
+                        <Button
+                          size="icon"
+                          variant="outline"
+                          className="h-8 w-8 rounded-full"
+                          onClick={() => handleUpdateWL(player._id, "loss", -1)}
+                          disabled={player.losses <= 0 || isWLUpdating(player._id, "loss", -1)}
+                        >
+                          {isWLUpdating(player._id, "loss", -1) ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Minus className="h-4 w-4" />
+                          )}
+                        </Button>
+                        <span className="w-8 text-center">{player.losses}</span>
+                        <Button
+                          size="icon"
+                          variant="outline"
+                          className="h-8 w-8 rounded-full"
+                          onClick={() => handleUpdateWL(player._id, "loss", 1)}
+                          disabled={isWLUpdating(player._id, "loss", 1)}
+                        >
+                          {isWLUpdating(player._id, "loss", 1) ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Plus className="h-4 w-4" />
+                          )}
+                        </Button>
                       </div>
-                      
-                      <div className="flex items-center">
-                        <span className="text-[#204d34] mr-3">Losses: {player.losses}</span>
-                        <div className="flex gap-1">
-                          <Button 
-                            onClick={() => handleUpdateWL(player._id, "loss", 1)}
-                            disabled={isWLUpdating(player._id, "loss", 1)}
-                            className="h-8 w-8 p-0 rounded-md border border-[#204d34] bg-[#e0fbe0] text-[#204d34] hover:bg-[#c1e8b8]"
-                          >
-                            {isWLUpdating(player._id, "loss", 1) ? 
-                              <Loader2 className="h-4 w-4 animate-spin" /> : 
-                              <Plus size={16} />
-                            }
-                          </Button>
-                          <Button 
-                            onClick={() => handleUpdateWL(player._id, "loss", -1)}
-                            disabled={isWLUpdating(player._id, "loss", -1) || player.losses === 0}
-                            className="h-8 w-8 p-0 rounded-md border border-[#204d34] bg-[#e0fbe0] text-[#204d34] hover:bg-[#c1e8b8]"
-                          >
-                            {isWLUpdating(player._id, "loss", -1) ? 
-                              <Loader2 className="h-4 w-4 animate-spin" /> : 
-                              <Minus size={16} />
-                            }
-                          </Button>
-                        </div>
-                      </div>
-                      
+                    </td>
+                    <td className="p-4 text-right">
                       <AlertDialog>
                         <AlertDialogTrigger asChild>
-                          <Button 
-                            className="h-8 w-8 p-0 rounded-md bg-[#b91c1c] text-white hover:bg-[#7f1d1d]"
-                            aria-label="Delete player"
-                            disabled={!!deletingPlayerIds[player._id]}
-                          >
-                            {deletingPlayerIds[player._id] ? 
-                              <Loader2 className="h-4 w-4 animate-spin" /> : 
-                              <Trash2 size={16} />
-                            }
+                          <Button variant="destructive" size="sm" disabled={deletingPlayerIds[player._id]}>
+                            {deletingPlayerIds[player._id] ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-4 w-4" />
+                            )}
                           </Button>
                         </AlertDialogTrigger>
-                        <AlertDialogContent className="bg-white">
+                        <AlertDialogContent>
                           <AlertDialogHeader>
-                            <AlertDialogTitle className="text-[#204d34]">Delete Player</AlertDialogTitle>
+                            <AlertDialogTitle>Delete Player</AlertDialogTitle>
                             <AlertDialogDescription>
-                              Are you sure you want to delete {player.name}?
+                              Are you sure you want to delete {player.name}? This action cannot be undone.
                             </AlertDialogDescription>
                           </AlertDialogHeader>
                           <AlertDialogFooter>
-                            <AlertDialogCancel className="bg-white text-[#204d34] border hover:bg-[#ecf7e8]">
-                              Cancel
-                            </AlertDialogCancel>
-                            <AlertDialogAction 
-                              onClick={() => handleDeletePlayer(player._id)}
-                              className="bg-[#b91c1c] hover:bg-[#7f1d1d] text-white"
-                            >
-                              Delete
-                            </AlertDialogAction>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction onClick={() => handleDeletePlayer(player._id)}>Delete</AlertDialogAction>
                           </AlertDialogFooter>
                         </AlertDialogContent>
                       </AlertDialog>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={5} className="text-center py-8 text-gray-500">
+                    No players found.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   )

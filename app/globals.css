@@ -72,6 +72,7 @@
   }
   body {
     @apply bg-background text-foreground;
+    overflow-x: hidden; /* Prevent horizontal overflow */
   }
 }
 
@@ -90,4 +91,94 @@
     max-width: 1800px;
     margin: 0 auto;
   }
+}
+
+/* Bounce animation for notifications */
+@keyframes bounce {
+  0% {
+    transform: translateY(-25px);
+    opacity: 0;
+  }
+  50% {
+    transform: translateY(10px);
+    opacity: 1;
+  }
+  75% {
+    transform: translateY(-5px);
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.bounce-in {
+  animation: bounce 0.8s ease forwards;
+}
+
+/* Pump.fun style notification animation */
+@keyframes pumpNotification {
+  0% {
+    transform: translateY(20px) scale(0.95);
+    opacity: 0;
+  }
+  50% {
+    transform: translateY(-5px) scale(1.05);
+    opacity: 1;
+  }
+  75% {
+    transform: translateY(2px) scale(1.02);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+.pump-notification {
+  position: relative;
+  overflow: hidden;
+  backdrop-filter: blur(5px);
+  border-radius: 10px;
+  transform-origin: center bottom;
+}
+
+.pump-notification::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.8), transparent);
+  animation: shimmer 2s infinite;
+}
+
+/* Glowing pulse animation for important notifications */
+@keyframes glowPulse {
+  0% {
+    box-shadow: 0 0 5px rgba(172, 242, 189, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 15px rgba(172, 242, 189, 0.6), 0 0 30px rgba(172, 242, 189, 0.3);
+  }
+  100% {
+    box-shadow: 0 0 5px rgba(172, 242, 189, 0.3);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* QR Code positioning */
+.qr-container {
+  position: relative;
+  padding-top: 1rem;
+  z-index: 20;
 }
